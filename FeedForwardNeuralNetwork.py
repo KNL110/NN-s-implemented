@@ -4,12 +4,12 @@ from GradOptimizers import ActivationFunction, ActivationGradient
 
 LossFxn = {
     'MSE': lambda y_true, y_pred: np.mean((y_true - y_pred) ** 2),
-    'CrossEntropy': lambda y_true, y_pred: -np.sum(y_true * np.log(y_pred + 1e-3))
+    'CrossEntropy': lambda y_true, y_pred: -np.mean(y_true * np.log(y_pred + 1e-9) + (1 - y_true) * np.log(1 - y_pred + 1e-9))
 }
 
 LossFxnGrad = {
-    'MSE': lambda y_true, y_pred: -2 * (y_true - y_pred) / y_true.size,
-    'CrossEntropy': lambda y_true, y_pred: - (y_true / (y_pred + 1e-9)) 
+    'MSE': lambda y_true, y_pred: (y_pred - y_true) / y_true.size,
+    'CrossEntropy': lambda y_true, y_pred: -(y_true / (y_pred + 1e-9)) + (1 - y_true) / (1 - y_pred + 1e-9)
 }
 
 class Neuron:
@@ -74,7 +74,7 @@ class NeuralNetwork:
         
     
     def Backward(self, y_true, y_pred):
-        dL_da = -(y_true - y_pred)
+        dL_da = LossFxnGrad[self.LossFunction](y_true, y_pred)
         
         for idx in range(self.n_layers - 1, 0, -1):
             layer = self.layers[idx]
@@ -91,7 +91,7 @@ class NeuralNetwork:
             layer.grad_b = dL_dz
 
 
-    def train(self,model, x, y, lr=0.01, epochs=1000):
+    def train(self,model, x, y, lr=0.01, epochs=1000, verbose=True):
         n,d = x.shape
         for epoch in range(epochs):
             total_loss = 0
@@ -107,7 +107,8 @@ class NeuralNetwork:
                         neuron.bias = layer.biases[j:j+1]
                 loss = LossFxn[self.LossFunction](y[i].reshape(-1,1), y_pred)
                 total_loss += loss
-            print(f"Epoch {epoch}: Loss = {total_loss / n:.6f}")
+            if verbose:
+                print(f"Epoch {epoch}: Loss = {total_loss / n:.6f}")
 
 
 
@@ -116,12 +117,15 @@ if __name__ == "__main__":
     X = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
     Y = np.array([[0], [1], [1], [0]])
 
-    nn = NeuralNetwork(layerSizes=[2, 5, 1],   #input layer, one hidden layer, output layer
-                       activations=['tanh', 'sigmoid'],
-                       LossFunction='CrossEntropy')
+    nn = NeuralNetwork(
+        layerSizes=[2, 5, 1],
+        activations=['tanh', 'sigmoid'],
+        LossFunction='MSE'
+        )
 
-    nn.train(nn, X, Y, lr=0.1, epochs=1000)
+    nn.train(nn, X, Y, lr=0.5, epochs=1000)
 
+    print("\nXOR Results:")
     for x in X:
-        y_pred = nn.forward(x)
-        print(f"Input: {x}, Predicted Output: {y_pred}")
+        y_pred = nn.forward(x.reshape(-1, 1))
+        print(f"Input: {x}, Predicted: {y_pred.flatten()[0]:.4f}")
