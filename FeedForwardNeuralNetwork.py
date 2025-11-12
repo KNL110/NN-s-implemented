@@ -4,12 +4,12 @@ from GradOptimizers import ActivationFunction, ActivationGradient
 
 LossFxn = {
     'MSE': lambda y_true, y_pred: np.mean((y_true - y_pred) ** 2),
-    'CrossEntropy': lambda y_true, y_pred: -np.mean(y_true * np.log(y_pred + 1e-9) + (1 - y_true) * np.log(1 - y_pred + 1e-9))
+    'CrossEntropy': lambda y_true, y_pred: -np.sum(y_true * np.log(y_pred + 1e-9))
 }
 
 LossFxnGrad = {
     'MSE': lambda y_true, y_pred: (y_pred - y_true) / y_true.size,
-    'CrossEntropy': lambda y_true, y_pred: -(y_true / (y_pred + 1e-9)) + (1 - y_true) / (1 - y_pred + 1e-9)
+    'CrossEntropy': lambda y_true, y_pred: (y_pred - y_true)
 }
 
 class Neuron:
@@ -25,9 +25,6 @@ class Neuron:
         self.output = self.activate(self.z)
         return self.output
 
-    def backward(self, dout):
-        pass  # Placeholder for backward method
-
 
 class NeuralLayer:
     def __init__(self, n_neurons, d_input, activation):
@@ -38,11 +35,27 @@ class NeuralLayer:
 
     def forward(self, x):
         self.input = x
-        outputs = []
+        z_values = []
         for neuron in self.neurons:
-            outputs.append(neuron.forward(x))
-        self.z = np.hstack([neuron.z for neuron in self.neurons])
-        self.output = np.vstack(outputs)
+            neuron.input = x
+            neuron.z = x.T @ neuron.weights + neuron.bias
+            z_values.append(neuron.z)
+        
+        self.z = np.hstack(z_values)
+        
+        if self.activation == 'softmax':
+            z_flat = self.z.flatten()
+            activations = ActivationFunction['softmax'](z_flat).reshape(-1, 1)
+            for i, neuron in enumerate(self.neurons):
+                neuron.output = activations[i]
+        else:
+            activations = []
+            for neuron in self.neurons:
+                neuron.output = neuron.activate(neuron.z)
+                activations.append(neuron.output)
+            activations = np.vstack(activations)
+        
+        self.output = activations
         return self.output
 
     def backward(self, weights, dout):
@@ -91,7 +104,7 @@ class NeuralNetwork:
             layer.grad_b = dL_dz
 
 
-    def train(self,model, x, y, lr=0.01, epochs=1000, verbose=True):
+    def train(self, x, y, lr=0.01, epochs=500):
         n,d = x.shape
         for epoch in range(epochs):
             total_loss = 0
@@ -107,8 +120,7 @@ class NeuralNetwork:
                         neuron.bias = layer.biases[j:j+1]
                 loss = LossFxn[self.LossFunction](y[i].reshape(-1,1), y_pred)
                 total_loss += loss
-            if verbose:
-                print(f"Epoch {epoch}: Loss = {total_loss / n:.6f}")
+            print(f"Epoch {epoch}: Loss = {total_loss / n:.6f}")
 
 
 
@@ -117,15 +129,12 @@ if __name__ == "__main__":
     X = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
     Y = np.array([[0], [1], [1], [0]])
 
-    nn = NeuralNetwork(
-        layerSizes=[2, 5, 1],
-        activations=['tanh', 'sigmoid'],
-        LossFunction='MSE'
-        )
+    nn = NeuralNetwork(layerSizes=[2, 5, 1],
+                       activations=['tanh', 'sigmoid'],
+                       LossFunction='MSE')
 
-    nn.train(nn, X, Y, lr=0.5, epochs=1000)
+    nn.train(X, Y, lr=0.5, epochs=1000)
 
-    print("\nXOR Results:")
     for x in X:
         y_pred = nn.forward(x.reshape(-1, 1))
-        print(f"Input: {x}, Predicted: {y_pred.flatten()[0]:.4f}")
+        print(f"Input: {x}, Predicted Output: {y_pred.flatten()[0]:.4f}")
