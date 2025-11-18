@@ -4,137 +4,92 @@ from GradOptimizers import ActivationFunction, ActivationGradient
 
 LossFxn = {
     'MSE': lambda y_true, y_pred: np.mean((y_true - y_pred) ** 2),
-    'CrossEntropy': lambda y_true, y_pred: -np.sum(y_true * np.log(y_pred + 1e-9))
+    'Entropy': lambda y_true, y_pred: np.sum(y_true * np.log(1/y_pred))
 }
 
 LossFxnGrad = {
     'MSE': lambda y_true, y_pred: (y_pred - y_true) / y_true.size,
-    'CrossEntropy': lambda y_true, y_pred: (y_pred - y_true)
+    'Entropy': lambda y_true, y_pred: (-y_true / (y_pred))
 }
 
-class Neuron:
-    def __init__(self, d, activation):
-        self.weights = np.random.randn(d, 1) * np.sqrt(2. / d)
-        self.bias = np.zeros(1)
-        self.activation = activation
-        self.activate = ActivationFunction[activation]
 
-    def forward(self, x):
-        self.input = x
-        self.z = x.T @ self.weights + self.bias
-        self.output = self.activate(self.z)
+class Dense:
+    def __init__(self, input_size, output_size, activation=None):
+        limit = np.sqrt(6 / (input_size + output_size))
+        self.W = np.random.uniform(-limit, limit, (output_size, input_size))
+        self.b = np.zeros((output_size, 1))
+        self.activation = activation
+
+    def forward(self, input):
+        self.input = input
+        self.Z = self.W @ input + self.b
+
+        if self.activation is None:
+            return self.Z
+        self.output = ActivationFunction[self.activation](self.Z)
         return self.output
 
-
-class NeuralLayer:
-    def __init__(self, n_neurons, d_input, activation):
-        self.activation = activation
-        self.neurons = [Neuron(d_input, activation) for _ in range(n_neurons)]
-        self.weights = np.hstack([neuron.weights for neuron in self.neurons])
-        self.biases = np.array([neuron.bias for neuron in self.neurons]).reshape(-1, 1)
-
-    def forward(self, x):
-        self.input = x
-        z_values = []
-        for neuron in self.neurons:
-            neuron.input = x
-            neuron.z = x.T @ neuron.weights + neuron.bias
-            z_values.append(neuron.z)
-        
-        self.z = np.hstack(z_values)
-        
-        if self.activation == 'softmax':
-            z_flat = self.z.flatten()
-            activations = ActivationFunction['softmax'](z_flat).reshape(-1, 1)
-            for i, neuron in enumerate(self.neurons):
-                neuron.output = activations[i]
-        else:
-            activations = []
-            for neuron in self.neurons:
-                neuron.output = neuron.activate(neuron.z)
-                activations.append(neuron.output)
-            activations = np.vstack(activations)
-        
-        self.output = activations
-        return self.output
-
-    def backward(self, weights, dout):
-        self.grad_hi = weights.T @ dout
-        self.grad_ai = self.grad_hi * ActivationGradient[self.activation](self.z)
-        self.grad_w = self.grad_ai @ self.input.T
-        self.grad_b = self.grad_ai
-
+    def backward(self, grad_output, lr):
+        #Gradient w.r.t. hidden units
+        if self.activation is not None:
 
 class NeuralNetwork:
-    def __init__(self, layerSizes, activations, LossFunction='CrossEntropy', optimizer=None):
-        self.n_layers = len(layerSizes)
-        self.HiddenLayers = self.n_layers - 2
+    def __init__(self, layerSizes, activations, LossFunction='MSE'):
+        self.L = len(activations)
         self.layers = {}
-        self.optimizer = optimizer
+        for i in range(self.L):
+            activation = None if activations[i] is None else activations[i]
+            self.layers[i+1] = Dense(layerSizes[i], layerSizes[i + 1], activation)
         self.LossFunction = LossFunction
-        self.GradLossFxn = None
-        for i in range(1, self.n_layers):
-            self.layers[i] = NeuralLayer(layerSizes[i], layerSizes[i - 1], activations[i-1])
-
-    def grad_w(self, x, y):
-        return np.zeros_like(x)
 
     def forward(self, x):
-        self.input = x
+        a = x
         for layer in self.layers.values():
-            x = layer.forward(x)
-        return x
-        
+            a = layer.forward(a)
+        return a
     
-    def Backward(self, y_true, y_pred):
-        dL_da = LossFxnGrad[self.LossFunction](y_true, y_pred)
-        
-        for idx in range(self.n_layers - 1, 0, -1):
-            layer = self.layers[idx]
+    def backward(self,y_true, y_pred):
+        #compute output layer gradient
+        grad_al = -(y_true - y_pred)
+        for l in range(self.L-1, 0, -1):
+            layer = self.layers[l]
+            Wl = self.layers[l+1].W
+            bl = self.layers[l+1].b
+            grad_hl = Wl.T @ grad_al
+            grad_al = grad_hl * ActivationGradient[layer.activation](layer.Z)
             
-            if idx == self.n_layers - 1:
-                dL_dz = dL_da * ActivationGradient[layer.activation](layer.z.reshape(-1, 1))
-            else:
-                next_layer = self.layers[idx + 1]
-                dL_da = next_layer.weights @ next_layer.grad_ai
-                dL_dz = dL_da * ActivationGradient[layer.activation](layer.z.reshape(-1, 1))
-            
-            layer.grad_ai = dL_dz
-            layer.grad_w = dL_dz @ layer.input.T
-            layer.grad_b = dL_dz
 
+    def compute_loss(self, y_true, y_pred):
+        return LossFxn[self.LossFunction](y_true, y_pred)
 
-    def train(self, x, y, lr=0.01, epochs=500):
-        n,d = x.shape
+    def train(self, X, Y, lr=0.01, epochs=1000, batchSize=32):
         for epoch in range(epochs):
-            total_loss = 0
-            for i in range(n):
-                y_pred = self.forward(x[i].reshape(-1,1))
-                self.Backward(y[i].reshape(-1,1), y_pred)
-                
-                for layer in self.layers.values():
-                    layer.weights -= lr * layer.grad_w.T
-                    layer.biases -= lr * layer.grad_b
-                    for j, neuron in enumerate(layer.neurons):
-                        neuron.weights = layer.weights[:, j:j+1]
-                        neuron.bias = layer.biases[j:j+1]
-                loss = LossFxn[self.LossFunction](y[i].reshape(-1,1), y_pred)
-                total_loss += loss
-            print(f"Epoch {epoch}: Loss = {total_loss / n:.6f}")
+            totalLoss = 0
+            for x, y in zip(X, Y):
+                x = x.reshape(-1, 1)
+                y = y.reshape(-1, 1)
+
+                y_pred = self.forward(x)
+
+                loss = self.compute_loss(y, y_pred)
+                totalLoss += loss
+                # Backward pass would go here
+            print(f"Epoch {epoch}, Loss: {totalLoss}")
 
 
-
-#Xor problem example
+# Xor problem example
 if __name__ == "__main__":
     X = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
     Y = np.array([[0], [1], [1], [0]])
 
-    nn = NeuralNetwork(layerSizes=[2, 5, 1],
-                       activations=['tanh', 'sigmoid'],
-                       LossFunction='MSE')
+    nn = NeuralNetwork(
+        layerSizes=[2, 4, 1],
+        activations=['sigmoid', 'sigmoid'],
+        LossFunction='MSE'
+        )
 
-    nn.train(X, Y, lr=0.5, epochs=1000)
+    # nn.train(X, Y, lr=0.5, epochs=1000)
 
-    for x in X:
-        y_pred = nn.forward(x.reshape(-1, 1))
-        print(f"Input: {x}, Predicted Output: {y_pred.flatten()[0]:.4f}")
+    # for x in X:
+    #     y_pred = nn.forward(x.reshape(-1, 1))
+    #     print(f"Input: {x}, Predicted Output: {y_pred.flatten()[0]:.4f}")

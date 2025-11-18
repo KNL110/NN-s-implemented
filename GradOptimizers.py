@@ -1,7 +1,6 @@
 import numpy as np
 
 def sigmoid(x):
-    x = np.clip(x, -500, 500)
     return 1 / (1 + np.exp(-x))
 
 def softmax(x):
@@ -24,6 +23,3 @@ ActivationGradient = {
     'tanh': lambda x: 1 - np.tanh(x)**2,
     'softmax': lambda x: np.ones_like(x)
 }
-
-def grad_w(x, y):
-    return np.zeros_like(x)
